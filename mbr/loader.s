@@ -20,6 +20,11 @@ jmp loader_start
     GDT_SIZE equ $ - GDT_BASE
     GDT_LIMIT equ GDT_SIZE - 1
     times 60 dq 0   ; 此处预留 60 个描述符的空位
+    ; total_mem_bytes 保存BIOS返回的内存容量，以字节为单位
+    ; loader.bin加载地址为0x900
+    ; gdt定义和times 60 dq 0占用内存为：4 * 64 + 60 * 8 = 0x200个字节
+    ; total_mem_bytes 的地址为0xb00
+    total_mem_bytes dd 0
 
     SELECTOR_CODE equ (0x0001 << 3) + TI_GDT + RPL0
     SELECTOR_DATA equ (0x0002 << 3) + TI_GDT + RPL0
@@ -29,17 +34,83 @@ jmp loader_start
     gdt_ptr dw GDT_LIMIT
                 dd GDT_BASE
     
-    loadermsg db '2 loader in real.'
+    ards_buf times 244 db 0 
+    ards_nr dw 0 ; total_mem_bytes(4字节) + gdt_ptr(6字节) + ards_buf(244字节) + ards_nr(2字节) = 256字节
 
 loader_start:
-    mov sp, LOADER_BASE_ADDR
-    mov bp, loadermsg
-    mov cx, 17
-    mov ax, 0x1301
-    mov bx, 0x001f
-    mov dx, 0x1800
-    int 0x10
+    ; int 15h eax = 0000e820h, edx=534D4150h ('SMAP') 获取内存布局
+    xor ebx, ebx
+    mov edx, 0x534d4150
+    mov di, ards_buf
+.e820_get_mem_loop:
+    mov eax, 0x0000e820
+    mov ecx, 20
+    int 0x15
+    jc .e820_failed_so_try_e801
+    add di, cx
+    inc word [ards_nr]
+    cmp ebx, 0
+    jnz .e820_get_mem_loop
+    mov cx, [ards_nr]
+    mov ebx, ards_buf
+    xor edx, edx
+.find_max_mem_area:
+    mov eax, [ebx]
+    add eax, [ebx + 8]
+    add ebx, 20
+    cmp edx, eax
+    jge .next_ards
+    mov edx,  eax
+.next_ards:
+    loop .find_max_mem_area
+    jmp .mem_get_ok
 
+.e820_failed_so_try_e801:
+    mov eax, 0xe801
+    int 0x15
+    jc .e801_failed_so_try88
+
+    mov cx, 0x400
+    mul cx
+    shl edx, 16
+    and eax, 0x0000ffff
+    or edx, eax
+    add edx, 0x100000
+    mov esi, edx
+    xor eax, eax
+    mov ax, bx
+    mov ecx, 0x10000
+    mul ecx
+    add esi, eax
+    mov edx, esi
+    jmp .mem_get_ok
+
+.e801_failed_so_try88:
+    mov ah, 0x88
+    int 0x15
+    jc .error_hlt
+    and eax, 0x0000ffff
+    mov cx, 0x400
+    mul cx
+    shl edx, 16
+    or edx, eax
+    add edx, 0x100000
+
+.mem_get_ok:
+    mov [total_mem_bytes], edx
+    jmp .enter_pe
+
+.error_hlt:
+    jmp $
+    ; mov sp, LOADER_BASE_ADDR
+    ; mov bp, loadermsg
+    ; mov cx, 19
+    ; mov ax, 0x1301
+    ; mov bx, 0x001f
+    ; mov dx, 0x1800
+    ; int 0x10
+
+.enter_pe:
 ;=========准备进入保护模式==========
 ; 1.打开A20
 ; 2.加载gdt
@@ -69,7 +140,46 @@ p_mode_start:
     mov esp, LOADER_STACK_TOP
     mov ax, SELECTOR_VIDEO
     mov gs, ax
+    mov ax, SELECTOR_DATA
+    mov ds, ax
 
-    mov byte [gs:160], 'P'
+;     mov cl, strSize
+;     mov  si, 160
+; .showStr:
+;     mov al, [str + si]
+;     mov byte [gs:si], al
+;     inc si
+;     loop .showStr
+    mov byte [gs:160], 'M'
+    ; mov byte [gs: 161], 0xa4
+
+    ; mov byte [gs:162], 'e'
+    ; mov byte [gs: 163], 0xa4
+
+    ; mov byte [gs:164], 'm'
+    ; mov byte [gs:165], 0xa4
+
+    ; mov byte [gs:163], 'S'
+    ; mov byte [gs: 0x07], 0xa4
+
+    ; mov byte [gs:164], 'i'
+    ; mov byte [gs: 0x07], 0xa4
+
+    ; mov byte [gs:165], 'z'
+    ; mov byte [gs: 0x07], 0xa4
+
+    ; mov byte [gs:166], 'e'
+    ; mov byte [gs: 0x07], 0xa4
+
+    ; mov byte [gs:167], ':'
+    ; mov byte [gs: 0x07], 0xa4
+
+    ; mov byte [gs:168], ' '
+    ; mov byte [gs: 0x07], 0xa4
+
+    ; mov ebx, [ds:0xb03]
+
+    ; str: db "MemSize "
+    ; strSize: db ($-str)
 
     jmp $
