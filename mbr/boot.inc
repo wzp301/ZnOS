@@ -4,6 +4,12 @@ LOADER_SECTOR_NUM equ 0x3
 LOADER_BASE_ADDR equ 0x900
 PAGE_DIR_TABLE_ADDR equ 0x100000
 
+; 内核加载地址和扇区配置
+KERNEL_START_SECTOR equ 9
+KERNEL_BIN_BASE_ADDR equ 0x70000
+KERNEL_SECTOR_NUM equ 200
+KERNEL_ENTRY_POINT equ 0xc0001500
+
 ;============gdt描述符属性==============
 DESC_G_4K   equ 1_00000000000000000000000b ; 23bit
 DESC_D_32   equ 1_0000000000000000000000b ; 22bit
@@ -40,3 +46,6 @@ PG_RW_R equ 00b
 PG_RW_W equ 10b
 PG_US_S equ 000b
 PG_US_U equ 100b
+
+;-------------  program type 定义   --------------
+PT_NULL equ 0
