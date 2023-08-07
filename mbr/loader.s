@@ -131,55 +131,85 @@ loader_start:
 
     jmp dword SELECTOR_CODE:p_mode_start  ;刷新流水线
 
+
 [bits 32]
 p_mode_start:
     mov ax, SELECTOR_DATA
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov esp, LOADER_STACK_TOP
+    mov esp,LOADER_STACK_TOP
     mov ax, SELECTOR_VIDEO
     mov gs, ax
-    mov ax, SELECTOR_DATA
-    mov ds, ax
+        ; 创建页目录表
+    call setup_page
 
-;     mov cl, strSize
-;     mov  si, 160
-; .showStr:
-;     mov al, [str + si]
-;     mov byte [gs:si], al
-;     inc si
-;     loop .showStr
-    mov byte [gs:160], 'M'
-    ; mov byte [gs: 161], 0xa4
+    ; 将描述符表地址和偏移量写入内粗gdt_ptr
+    sgdt [gdt_ptr]
+    
+    ;将gdt描述符中视频段描述符的段基地址+0xc0000000
+    mov ebx, [gdt_ptr + 2]
+    or dword [ebx + 0x18 + 4], 0xc0000000
 
-    ; mov byte [gs:162], 'e'
-    ; mov byte [gs: 163], 0xa4
+    ; 将gdt的基址加上0xc0000000，使其成为内核所在的高地址
+    add dword [gdt_ptr + 2], 0xc0000000
 
-    ; mov byte [gs:164], 'm'
-    ; mov byte [gs:165], 0xa4
+    add esp, 0xc0000000 ; 将栈帧映射到内核空间
 
-    ; mov byte [gs:163], 'S'
-    ; mov byte [gs: 0x07], 0xa4
+    ; cr3设置页目录地址
+    mov eax, PAGE_DIR_TABLE_ADDR
+    mov cr3, eax
+    
+    ; 打开cr0的pg位
+    mov eax, cr0
+    or eax, 0x80000000
+    mov cr0, eax
 
-    ; mov byte [gs:164], 'i'
-    ; mov byte [gs: 0x07], 0xa4
+    ; 重新加载gdt
+    lgdt [gdt_ptr]
 
-    ; mov byte [gs:165], 'z'
-    ; mov byte [gs: 0x07], 0xa4
-
-    ; mov byte [gs:166], 'e'
-    ; mov byte [gs: 0x07], 0xa4
-
-    ; mov byte [gs:167], ':'
-    ; mov byte [gs: 0x07], 0xa4
-
-    ; mov byte [gs:168], ' '
-    ; mov byte [gs: 0x07], 0xa4
-
-    ; mov ebx, [ds:0xb03]
-
-    ; str: db "MemSize "
-    ; strSize: db ($-str)
+    mov byte [gs:160], 'V'
 
     jmp $
+
+setup_page:
+    mov ecx, 4096
+    mov esi, 0
+.clear_page_dir: ; 把页目录项表清零
+    mov byte [PAGE_DIR_TABLE_ADDR + esi], 0
+    inc esi
+    loop .clear_page_dir
+.create_pde:
+    mov eax, PAGE_DIR_TABLE_ADDR
+    add eax, 0x1000
+    mov ebx,  eax
+    or eax, PG_US_U | PG_RW_W | PG_P ; 页目录项的属性RW，P为1, US为1,所有特权级用户都可以访问
+    mov dword [PAGE_DIR_TABLE_ADDR + 0X0], eax
+    mov dword [PAGE_DIR_TABLE_ADDR + 0xc00], eax ; 第768个页目录和第0个页目录都指向第0个页表
+
+    sub eax, 0x1000
+    mov dword [PAGE_DIR_TABLE_ADDR + 4092], eax ; 最后一个页目录项指向页目录表的地址，方便用户进程访问内核空间页表
+    
+    ; 创建第1个页表项
+    mov ecx, 256
+    mov esi, 0
+    mov edx, PG_US_U | PG_RW_W | PG_P ; edx初始为0
+.create_pte:
+    mov [ebx + esi * 4], edx
+    add edx, 4096  ; edx指向1MB内存中下一个页
+    inc esi
+    loop .create_pte
+
+    ;创建内核其它页的页目录项（769～1022），第1023个目录项指向页目录表的地址
+    mov eax, PAGE_DIR_TABLE_ADDR
+    add eax, 0x2000
+    or eax, PG_US_U | PG_RW_W | PG_P
+    mov ebx, PAGE_DIR_TABLE_ADDR
+    mov ecx, 254
+    mov esi, 769
+.create_kernel_pde:
+    mov [ebx + esi * 4], eax
+    inc esi
+    add eax, 0x1000
+    loop .create_kernel_pde
+    ret
